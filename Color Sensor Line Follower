@@ -1,0 +1,337 @@
+import RPi.GPIO as GPIO
+import time
+
+# Assign GPIO pin numbers to variables
+
+#left sensor
+s2_left = 16
+s3_left = 18
+sig_left = 22 
+#right sensor
+
+s2_right = 29
+s3_right = 31
+sig_right = 36
+
+cycles = 10
+
+#motor pins
+OUT1 = 12 #backward left
+OUT2 = 11 #forward left
+
+OUT3 = 13 #backward right
+OUT4 = 15 #forward right
+
+
+# Setup GPIO and pins
+GPIO.setmode(GPIO.BOARD)
+
+GPIO.setup(s2_left, GPIO.OUT)
+GPIO.setup(s3_left, GPIO.OUT)
+GPIO.setup(sig_left, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+GPIO.setup(s2_right, GPIO.OUT)
+GPIO.setup(s3_right, GPIO.OUT)
+GPIO.setup(sig_right, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+GPIO.setup(OUT1, GPIO.OUT)
+GPIO.setup(OUT2, GPIO.OUT)
+GPIO.setup(OUT3, GPIO.OUT)
+GPIO.setup(OUT4, GPIO.OUT)
+
+GPIO.output(OUT1,GPIO.LOW)        
+GPIO.output(OUT2,GPIO.LOW)
+GPIO.output(OUT3,GPIO.LOW)        
+GPIO.output(OUT4,GPIO.LOW)
+
+p1=GPIO.PWM(OUT1,500)
+p2=GPIO.PWM(OUT2,500)
+p3=GPIO.PWM(OUT3,500)
+p4=GPIO.PWM(OUT4,500)
+
+p1.start(0)
+p2.start(0)
+p3.start(0)
+p4.start(0)
+
+
+def DetectColor(s2, s3, sig):
+    # Detect red values
+    GPIO.output(s2, GPIO.LOW)
+    GPIO.output(s3, GPIO.LOW)
+    #time.sleep(0.01)
+    start_time = time.time()
+    for count in range(cycles):
+        GPIO.wait_for_edge(sig, GPIO.FALLING)
+    duration = time.time() - start_time
+    red = cycles / duration
+    #print("red value - ", red)
+    # Detect blue values
+    GPIO.output(s2, GPIO.LOW)
+    GPIO.output(s3, GPIO.HIGH)
+    #time.sleep(0.01)
+    start_time = time.time()
+    for count in range(cycles):
+        GPIO.wait_for_edge(sig, GPIO.FALLING)
+    duration = time.time() - start_time
+    blue = cycles / duration
+    #print("blue value - ", blue)
+    # Detect green values
+    GPIO.output(s2, GPIO.HIGH)
+    GPIO.output(s3, GPIO.HIGH)
+    #time.sleep(0.01)
+    start_time = time.time()
+    for count in range(cycles):
+        GPIO.wait_for_edge(sig, GPIO.FALLING)
+    duration = time.time() - start_time
+    green = cycles / duration
+    #print("green value - ", green)
+    #returning tuple
+    return red, blue, green
+
+def Color_Detector_ok(L_R):
+    r = []
+    b = []
+    g = []
+    i = 0
+    if L_R == L:
+        s2=s2_left
+        s3=s3_left
+        sig=sig_left
+    if L_R == R:
+        s2=s2_right
+        s3=s3_right
+        sig=sig_right
+    while i <= 100:
+        r_instance, b_instance, g_instance = DetectColor(s2, s3, sig)
+        r.insert(i, r_instance)
+        b.insert(i, b_instance)
+        g.insert(i, g_instance)
+        i += 1
+    sorted(r)
+    sorted(b)
+    sorted(g)
+    j = 0
+    while j <= 20:
+        r[j] = 0
+        b[j] = 0
+        g[j] = 0
+        j += 1
+    k = 79
+    while k <= 99:
+        r[k] = 0
+        b[k] = 0
+        g[k] = 0
+        k += 1
+    Sum_Red = sum(r)
+    Sum_Blue = sum(b)
+    Sum_Green = sum(g)
+    Number_Elements_In_List = 60
+    Average_Red = Sum_Red / Number_Elements_In_List
+    Average_Blue = (Sum_Blue / Number_Elements_In_List)
+    Average_Green = Sum_Green / Number_Elements_In_List
+    Adjusted_Red = (Average_Red +1000)/1000
+    Adjusted_Blue = (Average_Blue -3500)/1000
+    Adjusted_Green = (Average_Green +1500)/1000
+    Purple_Difference = Adjusted_Red - Adjusted_Blue
+    Purple_Abs = abs(Purple_Difference)
+    White_Check = (Adjusted_Red + Adjusted_Blue + Adjusted_Green)/3
+    #print("Red Compare:", Adjusted_Red)
+    print("Blue Compare:", Adjusted_Blue)
+    #print("Green Compare:", Adjusted_Green)
+    #print ("Purple Difference:", Purple_Abs)
+    #print ("White Check:", White_Check)
+    if L_R == L and White_Check > 16:
+        detected_color='white'
+    elif L_R == R and White_Check > 17:
+        detected_color='white'
+        #print ("White")
+    elif Adjusted_Green > Adjusted_Blue and Adjusted_Green > Adjusted_Red:
+        #print ("Green")
+        detected_color='green'
+    elif Purple_Abs < 3:
+        #print ("Purple")
+        detected_color='purple'
+    elif Adjusted_Red > Adjusted_Blue and Adjusted_Red > Adjusted_Green:
+        #print ("Red")
+        detected_color='red'
+    elif Adjusted_Blue > Adjusted_Red and Adjusted_Blue > Adjusted_Green:
+        #print ("Blue")
+        detected_color='blue'
+    #time.sleep(0.5)   #may need this
+    return detected_color, round(Adjusted_Red,4), round(Adjusted_Green,4), round(Adjusted_Blue,4)
+
+def left_turn(base_speed, speed_dif):
+    p1.ChangeDutyCycle(0)
+    p4.ChangeDutyCycle(0)
+    p2.ChangeDutyCycle(base_speed+speed_dif)
+    p3.ChangeDutyCycle(base_speed+speed_dif)
+     
+def right_turn(base_speed, speed_dif):
+    p2.ChangeDutyCycle(0)
+    p3.ChangeDutyCycle(0)
+    p1.ChangeDutyCycle(base_speed+speed_dif)
+    p4.ChangeDutyCycle(base_speed+speed_dif)
+     
+def full_stop():
+    p1.stop()
+    p2.stop()
+    p3.stop()
+    p4.stop()
+    
+def error_calc(L_R, tape_color, real_color_value, error_sum, prev_error):
+    K_p = 1
+    K_i = 0.05
+    K_d = 1.0
+    if L_R == L:
+        true_white_B = 20.5#adjusted_blue value (a number) when looking at white
+        true_white_R = 17.5
+        true_white_G = 19.5
+        #true_white_P =
+    if L_R == R:
+        true_white_B = 22.5
+        true_white_R = 20.3
+        true_white_G = 22.5
+        #true_white_P =
+    if tape_color == red:
+        true_value = true_white_R
+    if tape_color == blue:
+        true_value = true_white_B
+    if tape_color == green:
+        true_value = true_white_G
+    if tape_color == purple:
+        true_value = true_white_P
+    
+    error = true_value - real_color_value #real color value has to be the blue value 
+
+    Prop_comp = error*K_p
+    error_sum_new= error + error_sum
+    Int_comp = error_sum_new*K_i
+    error_diff=(error-prev_error)
+    Deriv_comp=error_diff*K_d
+    PID=(Prop_comp+Int_comp+Deriv_comp)/1
+    return error, error_sum_new, PID
+    
+
+
+#dummy values
+
+
+try:
+    red = 11
+    blue = 22
+    green = 33
+    purple = 44
+    L = 55
+    R = 66
+    er_sum_R = 0
+    er_prev_R = 0
+    er_sum_L = 0
+    er_prev_L = 0
+
+
+    track = blue
+    base_speed=25
+    
+    p2.ChangeDutyCycle(0)
+    p4.ChangeDutyCycle(0)
+    time.sleep(2)
+    
+    p2.ChangeDutyCycle(base_speed)
+    p4.ChangeDutyCycle(base_speed)
+    time.sleep(0.5)
+    while True:
+
+        
+        color_left, R_L, G_L, B_L = Color_Detector_ok(L)
+        color_right, R_R, G_R, B_R = Color_Detector_ok(R)
+        #print(color_left, R_L, G_L, B_L, color_right, R_R, G_R, B_R)
+        
+        er_prev_L, er_sum_L, PID_L = error_calc(L, track, B_L, er_sum_L, er_prev_L)  #er sum and er prev need initial value
+        er_prev_R, er_sum_R, PID_R = error_calc(R, track, B_R, er_sum_R, er_prev_R)
+        
+        #print('Previous Error', er_prev_L)
+        #print('Error Sum', er_sum_L)
+        print(abs(round(PID_L,4)), abs(round(PID_R,4)))
+        PID_diff=(PID_L-PID_R)/10
+        print(PID_diff)
+        if abs(PID_diff)>1:
+            print('whoops')
+            continue
+        if PID_diff>0: 
+            print('turn left')
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.1)
+            p1.ChangeDutyCycle(base_speed+abs(PID_diff)*(50-base_speed))
+            p2.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(base_speed+abs(PID_diff)*(50-base_speed))
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.15)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.1)
+            p3.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(base_speed+abs(PID_diff)*(75-base_speed))
+            p2.ChangeDutyCycle(0)
+            p1.ChangeDutyCycle((base_speed+abs(PID_diff)*(75-base_speed))/4)
+            time.sleep(0.05)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(base_speed)
+            p4.ChangeDutyCycle(base_speed)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.0125)
+
+
+        if PID_diff<0:
+            print('turn right')
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.1)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(base_speed+abs(PID_diff)*(50-base_speed))
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle(base_speed+abs(PID_diff)*(50-base_speed))
+            time.sleep(0.15)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(0)
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.1)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(base_speed+abs(PID_diff)*(75-base_speed))
+            p4.ChangeDutyCycle(0)
+            p3.ChangeDutyCycle((base_speed+abs(PID_diff)*(75-base_speed))/4)
+            time.sleep(0.05)
+            p1.ChangeDutyCycle(0)
+            p2.ChangeDutyCycle(base_speed)
+            p4.ChangeDutyCycle(base_speed)
+            p3.ChangeDutyCycle(0)
+            time.sleep(0.0125)
+            
+            
+
+        #if PID_L >= 1 or PID_R >= 1:
+            #print('whoops')
+
+
+        #if this is going backwards, change p2 to p1 and change p4 to p3
+        #p2.ChangeDutyCycle(base_speed+(100-base_speed)*PID_R)
+        #p2,ChangeDuty/cyclebas_speed+
+        
+        
+   
+        #Kp=1  +-0.5, 0.1 fine
+        #Ki=0.05 +- 0.01, 0.005
+        #Kd=1.0
+        
+except KeyboardInterrupt:
+    full_stop()
+    GPIO.cleanup()
+
